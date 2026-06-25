@@ -48,8 +48,10 @@ src/
 ├── components/
 │   ├── Feed.tsx          # 가상화 + 무한스크롤 + 복원 (핵심)
 │   ├── PostCard.tsx      # 트윗 카드 (가변 높이)
+│   ├── MasonryFeed.tsx   # 반응형 메이슨리 + 복원 (§8)
+│   ├── MasonryCard.tsx   # 핀터레스트식 카드 (이미지 상단)
 │   └── PostDetailPage.tsx# 상세 페이지
-└── App.tsx               # 라우팅 (/ , /post/:id)
+└── App.tsx               # 라우팅 (/ , /post/:id , /masonry)
 ```
 
 ---
@@ -263,12 +265,127 @@ const ALL_POSTS = buildPosts(10000)
 
 ---
 
-## 8. 요약: 동작을 가르는 4가지 결정
+## 8. 반응형 메이슨리: 같은 인프라, 다른 레이아웃
+
+피드를 1열이 아니라 **핀터레스트식 다열 메이슨리**로도 만들어 봤습니다(`/masonry`). 목표는 동일합니다 — 1만 개에서도 60fps, 그리고 상세에 들어갔다 **뒤로** 와도 메이슨리 레이아웃과 스크롤 위치가 그대로 복원될 것.
+
+### 8.1 메이슨리 구현 방식 비교
+
+| 방식 | 장점 | 치명적 단점 |
+|---|---|---|
+| `column-count` (CSS columns) | 한 줄, 반응형 자동 | 읽는 순서가 **세로**(1→2→3이 한 열에 쌓임) + **가상화 불가** |
+| CSS Grid `masonry` | 네이티브 | 아직 실험적·지원 부족 + **가상화 불가** |
+| **직접 컬럼 분배 + 가상화** | 순서 보존, 1만 개 OK | 각 아이템의 (x, y) 위치를 직접 계산 |
+
+핵심 기준은 단 하나, **"가상화가 되는가"** 입니다. CSS columns / grid masonry는 DOM을 전부 그려야 하므로 1만 개 요구사항과 양립할 수 없습니다. 그래서 직접 컬럼을 나누는 방식이 정답인데, 다행히 이미 쓰던 `@tanstack/react-virtual`이 **`lanes` 옵션으로 메이슨리 가상화를 지원**합니다.
+
+### 8.2 채택안: 반응형 컬럼 수 + virtualizer `lanes`
+
+- **컬럼 수만** 화면 너비에 따라 반응형으로 계산(`ResizeObserver`)
+- **세로 위치**는 `lanes`가 "가장 짧은 열"에 배치 — 핀터레스트 방식, 인덱스 순서 보존
+- **가로 위치**만 `translateX(lane × 100%)`로 직접 지정
+
+직접 배열을 열별로 쪼개 width를 주는 방식보다, 이미 가진 측정/복원 인프라(`measurementsCache`, 무한스크롤)를 **그대로 재사용**할 수 있어 깔끔합니다.
+
+```tsx
+// MasonryFeed.tsx
+function columnsFor(width: number): number {   // 너비 → 컬럼 수
+  if (width < 540) return 1
+  if (width < 840) return 2
+  if (width < 1140) return 3
+  if (width < 1500) return 4
+  return 5
+}
+
+const virtualizer = useVirtualizer({
+  count: posts.length,
+  getScrollElement: () => parentRef.current,
+  estimateSize: () => 280,
+  overscan: 8,
+  lanes: columns,                              // ← 메이슨리의 핵심
+  initialMeasurementsCache: reuseMeasurements, // (복원용)
+})
+
+// 가로는 직접, 세로는 virtualizer가 계산
+<div
+  className="masonry-row"
+  style={{
+    width: `${100 / columns}%`,
+    transform: `translateX(${item.lane * 100}%) translateY(${item.start}px)`,
+  }}
+/>
+```
+
+### 8.3 복원에서 만난 두 개의 함정 (lanes 특유)
+
+§5의 **앵커(index+delta) 방식을 그대로 가져왔더니 매번 ~438px씩 어긋났습니다.** 원인은 둘 다 `lanes` 모드에서만 드러나는 것이었습니다.
+
+**함정 1 — 마운트 때의 `measure()`가 복원 캐시를 지운다.**
+컬럼 수가 바뀌면 전 항목을 재측정해야 하는데, 이 `measure()`가 **첫 마운트에서도** 실행되어 복원해 둔 `initialMeasurementsCache`를 날려버렸습니다. → 컬럼이 *실제로* 바뀔 때만 재측정하도록 가드:
+
+```tsx
+// MasonryFeed.tsx
+const prevColumns = useRef(columns)
+useLayoutEffect(() => {
+  if (prevColumns.current !== columns) {   // 마운트 시엔 건너뛴다
+    prevColumns.current = columns
+    virtualizer.measure()
+  }
+}, [columns])
+```
+
+**함정 2 — `lanes`에서 `measurementsCache[i].start` ≠ 실제 렌더 위치.**
+저장 땐 `getVirtualItems()`의 lane-aware `start`(예: 2942px)를 읽었는데, 복원 땐 `measurementsCache[i].start`(2504px)를 읽었습니다. **둘은 서로 다른 좌표계**라 앵커가 엉뚱한 곳에 고정됐습니다.
+
+### 8.4 해결: 오히려 단순화 — 원시 오프셋 복원
+
+전체 `measurementsCache`를 복원하면 **총 높이가 그대로**이므로, 굳이 앵커 좌표를 계산하지 않고 **저장한 원시 스크롤 오프셋으로 바로 이동**하면 같은 픽셀에 정확히 도달합니다. 레인 좌표계의 차이에 의존할 필요가 사라집니다.
+
+```tsx
+// MasonryFeed.tsx — 저장: 원시 오프셋만
+saveFeedScroll(FEED_KEY, {
+  posts, cursor,
+  delta: virtualizer.scrollOffset ?? 0,        // 원시 픽셀 오프셋
+  measurements: virtualizer.measurementsCache,
+  columns,                                     // 컬럼 수가 같을 때만 측정 캐시 재사용
+})
+
+// 복원: 그 오프셋으로 몇 프레임 재핀
+useLayoutEffect(() => {
+  if (!saved || saved.columns !== columns) return
+  let raf = 0, tries = 0
+  const pin = () => {
+    virtualizer.scrollToOffset(saved.delta)
+    if (++tries < 12) raf = requestAnimationFrame(pin)
+  }
+  pin()
+  return () => cancelAnimationFrame(raf)
+}, [])
+```
+
+> 측정 높이는 **컬럼 폭에 의존**하므로, 저장 시점과 컬럼 수가 같을 때만 측정 캐시·복원을 적용합니다(`saved.columns === columns`). 창 크기가 바뀌었으면 재측정합니다.
+
+> **검증 결과**: 위치 `3000px` / `6000px`에서 글 진입 → 뒤로. 두 경우 모두 복원 후 **정확히 `3000` / `6000`** 으로 돌아오고, 로드 수·컬럼 수도 동일하게 유지됩니다.
+
+### 8.5 §5의 앵커 방식 vs 여기의 원시 오프셋 — 왜 다른가
+
+| | 단일 열 피드 (§5) | 메이슨리 (§8) |
+|---|---|---|
+| 복원 단위 | 앵커 아이템 (index + delta) | 원시 스크롤 오프셋 |
+| 이유 | 단일 열에선 `measurementsCache.start` = 렌더 위치라 앵커가 안정적 | `lanes`에선 둘이 다른 좌표계 → 앵커가 깨짐 |
+| 공통 전제 | `posts` + `measurements`를 함께 복원해 **총 높이를 그대로 재구성** | (동일) |
+
+즉 **"무엇을 기억하느냐"는 레이아웃에 따라 다르지만, "측정된 전체 높이를 통째로 복원한다"는 토대는 같습니다.**
+
+---
+
+## 9. 요약: 동작을 가르는 4가지 결정
 
 1. **`transform: translateY`로 absolute 배치** — reflow 없이 수천 노드를 옮긴다.
 2. **`measureElement`로 가변 높이 실측·캐시** — 트윗마다 높이가 다른 현실에 대응.
 3. **앵커(인덱스+delta) 기반 복원** — 픽셀이 아니라 아이템을 고정해 재측정 드리프트를 없앤다.
 4. **배치 페칭 + `min-height` 점진 확장, 그리고 그 상태(posts·measurements)를 캐시** — 미리 다 받지 않는 실제 피드를 그대로 재현하고, 돌아왔을 때 높이를 재구성한다.
+5. **메이슨리는 `lanes`로 가상화** — 컬럼 수만 반응형으로, 위치는 virtualizer에 맡긴다. 복원은 좌표계 함정을 피해 **원시 오프셋**으로 단순화한다(§8).
 
 ## 실행
 
@@ -278,3 +395,4 @@ bun dev   # http://localhost:5173
 ```
 
 `/` 피드에서 한참 스크롤 → 아무 글 클릭 → 뒤로 가기. 위치가 그대로 복원되는지 확인하세요.
+헤더의 **Masonry →** 로 이동하면 반응형 메이슨리(`/masonry`)에서도 동일하게 동작합니다(창 크기를 바꿔 컬럼 수 변화도 확인해 보세요).

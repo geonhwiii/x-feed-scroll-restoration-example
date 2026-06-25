@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { fetchPage, type Post } from '../data/feed'
 import { loadFeedScroll, saveFeedScroll } from '../lib/scrollCache'
@@ -89,6 +89,9 @@ export function Feed() {
       <header className="feed-header">
         <h1>Home</h1>
         <span className="feed-count">{posts.length.toLocaleString()} loaded</span>
+        <Link to="/masonry" className="header-link">
+          Masonry →
+        </Link>
       </header>
       <div className="feed-inner" style={{ minHeight: virtualizer.getTotalSize() }}>
         {items.map((item) => {

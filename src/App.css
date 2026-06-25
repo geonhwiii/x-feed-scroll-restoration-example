@@ -46,6 +46,13 @@ body {
   color: var(--muted);
   font-size: 13px;
 }
+.header-link {
+  margin-left: auto;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+}
 .back-btn {
   background: none;
   border: none;
@@ -125,6 +132,73 @@ body {
   gap: 28px;
   color: var(--muted);
   font-size: 13px;
+}
+
+/* ---- masonry (full-width, virtualized lanes) ---- */
+.masonry-scroller {
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.masonry-inner {
+  position: relative;
+  width: 100%;
+}
+.masonry-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 8px;
+}
+.mcard {
+  background: #16181c;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.mcard:hover {
+  border-color: #3d4144;
+}
+.mcard-image {
+  width: 100%;
+}
+.mcard-body {
+  padding: 10px 12px 12px;
+}
+.mcard-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.mcard-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.mcard-author {
+  font-weight: 700;
+  font-size: 14px;
+}
+.mcard-handle {
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcard-text {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.mcard-actions {
+  display: flex;
+  gap: 18px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 /* ---- detail ---- */

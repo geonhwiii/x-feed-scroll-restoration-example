@@ -21,6 +21,9 @@ interface FeedScrollState {
   index: number
   delta: number
   measurements: VirtualItem[]
+  // Masonry only: column count at save time. Item heights depend on column
+  // width, so cached measurements are only reusable if columns still match.
+  columns?: number
 }
 
 const cache = new Map<string, FeedScrollState>()
