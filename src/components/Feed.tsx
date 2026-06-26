@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { fetchPage, type Post } from '../data/feed'
+import { useFeedQuery } from '../hooks/useFeedQuery'
 import { loadFeedScroll, saveFeedScroll } from '../lib/scrollCache'
 import { PostCard } from './PostCard'
 
@@ -11,27 +11,10 @@ export function Feed() {
   const navigate = useNavigate()
   const parentRef = useRef<HTMLDivElement>(null)
 
-  // 상세 페이지에서 돌아온 경우 이전에 불러온 타임라인을 복원하고,
-  // 그렇지 않으면 빈 상태로 시작해 첫 페이지를 가져온다.
+  // 타임라인(pages·cursor)은 react-query 캐시에 있으므로, 돌아오면 이미 로드한
+  // 글이 그대로 동기 반환된다. 여기선 스크롤 위치 복원만 신경 쓴다.
+  const { posts, fetchNextPage, hasNextPage, isFetchingNextPage } = useFeedQuery()
   const saved = loadFeedScroll(FEED_KEY)
-  const [posts, setPosts] = useState<Post[]>(() => saved?.posts ?? [])
-  const [cursor, setCursor] = useState<number | null>(() => saved?.cursor ?? 0)
-  const loadingRef = useRef(false)
-
-  const loadMore = useCallback(async () => {
-    if (loadingRef.current || cursor === null) return
-    loadingRef.current = true
-    const page = await fetchPage(cursor)
-    setPosts((prev) => [...prev, ...page.posts])
-    setCursor(page.nextCursor)
-    loadingRef.current = false
-  }, [cursor])
-
-  // 저장된 상태가 없는 새 마운트에서 첫 fetch를 시작한다.
-  useEffect(() => {
-    if (posts.length === 0) loadMore()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const virtualizer = useVirtualizer({
     count: posts.length,
@@ -65,8 +48,6 @@ export function Feed() {
     const items = virtualizer.getVirtualItems()
     const anchor = items.find((it) => it.end > offset) ?? items[0]
     saveFeedScroll(FEED_KEY, {
-      posts,
-      cursor,
       index: anchor?.index ?? 0,
       delta: anchor ? offset - anchor.start : 0,
       measurements: virtualizer.measurementsCache,
@@ -80,9 +61,11 @@ export function Feed() {
   const items = virtualizer.getVirtualItems()
   const lastItem = items[items.length - 1]
   useEffect(() => {
-    if (lastItem && lastItem.index >= posts.length - 1) loadMore()
+    if (lastItem && lastItem.index >= posts.length - 1 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastItem?.index, posts.length])
+  }, [lastItem?.index, posts.length, hasNextPage, isFetchingNextPage])
 
   return (
     <div ref={parentRef} className="feed-scroller">
@@ -109,7 +92,7 @@ export function Feed() {
           )
         })}
       </div>
-      {cursor !== null && <div className="feed-loading">Loading more…</div>}
+      {hasNextPage && <div className="feed-loading">Loading more…</div>}
     </div>
   )
 }
