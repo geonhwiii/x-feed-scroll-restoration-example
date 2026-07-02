@@ -41,21 +41,18 @@ export function Feed() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 최신 상태를 ref에 담아 스크롤마다가 아니라 unmount 시 한 번만 저장한다.
-  const snapshot = useRef<() => void>(() => {})
-  snapshot.current = () => {
-    const offset = virtualizer.scrollOffset ?? 0
-    const items = virtualizer.getVirtualItems()
-    const anchor = items.find((it) => it.end > offset) ?? items[0]
-    saveFeedScroll(FEED_KEY, {
-      index: anchor?.index ?? 0,
-      delta: anchor ? offset - anchor.start : 0,
-      measurements: virtualizer.measurementsCache,
-    })
-  }
   useEffect(() => {
-    return () => snapshot.current()
-  }, [])
+    return () => {
+      const offset = virtualizer.scrollOffset ?? 0
+      const items = virtualizer.getVirtualItems()
+      const anchor = items.find((it) => it.end > offset) ?? items[0]
+      saveFeedScroll(FEED_KEY, {
+        index: anchor?.index ?? 0,
+        delta: anchor ? offset - anchor.start : 0,
+        measurements: virtualizer.measurementsCache,
+      })
+    }
+  }, [virtualizer])
 
   // 무한 스크롤: 마지막 아이템이 보이면 다음 페이지를 가져온다.
   const items = virtualizer.getVirtualItems()
